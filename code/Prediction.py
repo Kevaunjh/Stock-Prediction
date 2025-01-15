@@ -26,8 +26,6 @@ def predict_future(data, start_date, end_date, model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
 
         model = ARIMAResults.load(model_path)
-        logging.info("ARIMA model loaded successfully.")
-
         last_date = data.index[-1]  
         if pd.to_datetime(start_date) <= last_date:
             raise ValueError(f"Start date {start_date} must be after the last date in the training data ({last_date}).")
@@ -36,7 +34,7 @@ def predict_future(data, start_date, end_date, model_path):
 
         forecast = model.predict(start=len(data), end=len(data) + len(future_dates) - 1, dynamic=True)
         forecast.index = future_dates 
-        logging.info("Forecast generated successfully.")
+        logging.info("Now plotting the expected future values of TSLA")
 
 
         plt.figure(figsize=(12, 6))
@@ -44,7 +42,6 @@ def predict_future(data, start_date, end_date, model_path):
         plt.plot(forecast, label='Forecast', color='red')
         plt.title('ARIMA Model Forecast')
         plt.legend()
-        plt.show()
 
         return forecast
     except Exception as e:
@@ -65,5 +62,7 @@ if __name__ == "__main__":
         forecast = predict_future(data, args.start_date, args.end_date, args.model_path)
         print("Forecasted values:")
         print(forecast)
+        plt.show()
+
     except Exception as e:
         logging.error(f"Execution failed: {e}")
