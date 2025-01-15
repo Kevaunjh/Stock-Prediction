@@ -47,6 +47,18 @@ def predict_future(data, start_date, end_date, model_path):
     except Exception as e:
         logging.error(f"Error during prediction: {e}")
         raise
+    
+def MaximizeIncome(forecast):
+    currentmoney = 10000
+    
+    for i in range(len(forecast) - 1):
+        if (forecast.iloc[i] > forecast.iloc[i + 1]):
+            currentmoney += forecast.iloc[i] - forecast.iloc[i + 1]
+            print(f"Day {i + 1}: Buy at {forecast.iloc[i]} and sell at {forecast.iloc[i + 1]} for a profit of {forecast.iloc[i] - forecast.iloc[i + 1]}")
+    
+    print("Your total profit is: $" , currentmoney - 10000, "Resulting in a total of: $" , currentmoney)
+            
+    
 
 
 if __name__ == "__main__":
@@ -63,6 +75,8 @@ if __name__ == "__main__":
         print("Forecasted values:")
         print(forecast)
         plt.show()
+        print("\nThe total that you can acheive is ")
+        MaximizeIncome(forecast)
 
     except Exception as e:
         logging.error(f"Execution failed: {e}")
