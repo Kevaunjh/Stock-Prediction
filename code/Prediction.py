@@ -49,14 +49,33 @@ def predict_future(data, start_date, end_date, model_path):
         raise
     
 def MaximizeIncome(forecast):
-    currentmoney = 10000
+    initial_money = 10000
+    max_profit = 0
+    best_buy_day = -1
+    best_sell_day = -1
     
-    for i in range(len(forecast) - 1):
-        if (forecast.iloc[i] > forecast.iloc[i + 1]):
-            currentmoney += forecast.iloc[i] - forecast.iloc[i + 1]
-            print(f"Day {i + 1}: Buy at {forecast.iloc[i]} and sell at {forecast.iloc[i + 1]} for a profit of {forecast.iloc[i] - forecast.iloc[i + 1]}")
+    for buy_day in range(len(forecast) - 1):
+        for sell_day in range(buy_day + 1, len(forecast)):
+            buy_price = forecast.iloc[buy_day]
+            sell_price = forecast.iloc[sell_day]
+            effective_buy_price = buy_price * 1.01
+            effective_sell_price = sell_price * 0.99
+            profit = effective_sell_price - effective_buy_price
+            if profit > max_profit:
+                max_profit = profit
+                best_buy_day = buy_day
+                best_sell_day = sell_day
     
-    print("Your total profit is: $" , currentmoney - 10000, "Resulting in a total of: $" , currentmoney)
+    if max_profit > 0:
+        buy_price = forecast.iloc[best_buy_day]
+        sell_price = forecast.iloc[best_sell_day]
+        print(f"Day {best_buy_day + 1}: Buy at ${buy_price:.2f}")
+        print(f"Day {best_sell_day + 1}: Sell at ${sell_price:.2f}")
+        print(f"Profit from this transaction: ${max_profit:.2f}")
+        print(f"Your total balance after the transaction: ${initial_money + max_profit:.2f}")
+    else:
+        print("No possible way to benefit in money.")
+
             
     
 
@@ -74,9 +93,10 @@ if __name__ == "__main__":
         forecast = predict_future(data, args.start_date, args.end_date, args.model_path)
         print("Forecasted values:")
         print(forecast)
-        plt.show()
-        print("\nThe total that you can acheive is ")
         MaximizeIncome(forecast)
+        plt.show()
+
+
 
     except Exception as e:
         logging.error(f"Execution failed: {e}")
