@@ -6,7 +6,7 @@ from datetime import datetime
 file_path = './../data/stock_data.csv'
 
 ticker = 'TSLA'
-start_date = '2020-01-01'
+start_date = '2024-01-01'
 end_date = datetime.today().strftime('%Y-%m-%d')
 
 if os.path.exists(file_path):

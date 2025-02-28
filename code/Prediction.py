@@ -1,9 +1,11 @@
-import argparse
 import os
 import pandas as pd
-from statsmodels.tsa.arima.model import ARIMAResults
+import numpy as np
 import matplotlib.pyplot as plt
 import logging
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -20,34 +22,40 @@ def load_data(file_path):
         logging.error(f"Error loading or preprocessing data: {e}")
         raise
 
-def predict_future(data, start_date, end_date, model_path):
+def predict_future(data, start_date, end_date, model_path, lookback=60):
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
-
-        model = ARIMAResults.load(model_path)
-        last_date = data.index[-1]  
-        if pd.to_datetime(start_date) <= last_date:
-            raise ValueError(f"Start date {start_date} must be after the last date in the training data ({last_date}).")
-
-        future_dates = pd.date_range(start=start_date, end=end_date, freq='B')  
-
-        forecast = model.predict(start=len(data), end=len(data) + len(future_dates) - 1, dynamic=True)
-        forecast.index = future_dates 
-        logging.info("Now plotting the expected future values of TSLA")
-
-
+        
+        model = load_model(model_path)
+        
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(data)
+        
+        last_lookback = scaled_data[-lookback:]
+        predictions = []
+        future_dates = pd.date_range(start=start_date, end=end_date, freq='B')
+        
+        for _ in range(len(future_dates)):
+            input_data = last_lookback.reshape((1, lookback, 1))
+            predicted_price = model.predict(input_data)[0, 0]
+            predictions.append(predicted_price)
+            last_lookback = np.append(last_lookback[1:], predicted_price).reshape(-1, 1)
+        
+        forecast = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
+        forecast_df = pd.DataFrame(forecast, index=future_dates, columns=['Predicted Price'])
+        
         plt.figure(figsize=(12, 6))
         plt.plot(data, label='Historical Data')
-        plt.plot(forecast, label='Forecast', color='red')
-        plt.title('ARIMA Model Forecast')
+        plt.plot(forecast_df, label='Forecast', color='red')
+        plt.title('LSTM Model Forecast')
         plt.legend()
-
-        return forecast
+        
+        return forecast_df
     except Exception as e:
         logging.error(f"Error during prediction: {e}")
         raise
-    
+
 def MaximizeIncome(forecast):
     initial_money = 10000
     max_profit = 0
@@ -56,8 +64,8 @@ def MaximizeIncome(forecast):
     
     for buy_day in range(len(forecast) - 1):
         for sell_day in range(buy_day + 1, len(forecast)):
-            buy_price = forecast.iloc[buy_day]
-            sell_price = forecast.iloc[sell_day]
+            buy_price = forecast.iloc[buy_day]["Predicted Price"]
+            sell_price = forecast.iloc[sell_day]["Predicted Price"]
             effective_buy_price = buy_price * 1.01
             effective_sell_price = sell_price * 0.99
             profit = effective_sell_price - effective_buy_price
@@ -67,8 +75,8 @@ def MaximizeIncome(forecast):
                 best_sell_day = sell_day
     
     if max_profit > 0:
-        buy_price = forecast.iloc[best_buy_day]
-        sell_price = forecast.iloc[best_sell_day]
+        buy_price = forecast.iloc[best_buy_day]["Predicted Price"]
+        sell_price = forecast.iloc[best_sell_day]["Predicted Price"]
         print(f"Day {best_buy_day + 1}: Buy at ${buy_price:.2f}")
         print(f"Day {best_sell_day + 1}: Sell at ${sell_price:.2f}")
         print(f"Profit from this transaction: ${max_profit:.2f}")
@@ -76,18 +84,16 @@ def MaximizeIncome(forecast):
     else:
         print("No possible way to benefit in money.")
 
-            
-    
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Predict stock prices using a trained ARIMA model.")
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Predict stock prices using a trained LSTM model.")
     parser.add_argument("--data_path", type=str, default="./../data/stock_data.csv", help="Path to the stock data CSV file.")
     parser.add_argument("--start_date", type=str, required=True, help="Start date for prediction (YYYY-MM-DD).")
     parser.add_argument("--end_date", type=str, required=True, help="End date for prediction (YYYY-MM-DD).")
-    parser.add_argument("--model_path", type=str, default="./../model/arima_model.pkl", help="Path to the trained ARIMA model file.")
+    parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5", help="Path to the trained LSTM model file.")
     args = parser.parse_args()
-
+    
     try:
         data = load_data(args.data_path)
         forecast = predict_future(data, args.start_date, args.end_date, args.model_path)
@@ -95,8 +101,5 @@ if __name__ == "__main__":
         print(forecast)
         MaximizeIncome(forecast)
         plt.show()
-
-
-
     except Exception as e:
         logging.error(f"Execution failed: {e}")
