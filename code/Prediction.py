@@ -11,15 +11,10 @@ from datetime import timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def load_data(file_path):
-    """
-    Loads data from CSV and expects columns: 
-    ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close'].
-    Indexes by "Date" (parsed as DateTime).
-    """
+
     try:
         data = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
         data.index = pd.to_datetime(data.index)
-
         data = data[['Open', 'High', 'Low', 'Close', 'Adj Close']].dropna()
         logging.info("Data loaded successfully. Data shape: %s", data.shape)
         return data
@@ -28,43 +23,39 @@ def load_data(file_path):
         raise
 
 def predict_future(data, start_date, end_date, model_path, lookback=60):
-    """
-    Loads the trained model from model_path, scales the data using all 5 features,
-    and uses the last 'lookback' days to forecast the next 7 business days.
-    The predicted target is the 'Adj Close' (column index 4).
-    Returns a DataFrame with the forecasted prices.
-    """
+
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
         
         model = load_model(model_path)
         
+
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaled_data = scaler.fit_transform(data)
-        
+
         if len(scaled_data) < lookback:
             pad_length = lookback - len(scaled_data)
             pad_array = np.repeat(scaled_data[0:1], pad_length, axis=0)
             scaled_data = np.concatenate([pad_array, scaled_data], axis=0)
             logging.info("Data padded: original length %d, padded to %d", len(data), len(scaled_data))
         
-        last_lookback = scaled_data[-lookback:]  
+        last_lookback = scaled_data[-lookback:] 
         predictions = []
         future_dates = pd.date_range(start=start_date, end=end_date, freq='B')
         
         for _ in range(len(future_dates)):
-            input_data = last_lookback.reshape((1, lookback, scaled_data.shape[1])) 
+            input_data = last_lookback.reshape((1, lookback, scaled_data.shape[1]))
             predicted_scaled = model.predict(input_data)[0, 0]
             predictions.append(predicted_scaled)
-
             new_row = last_lookback[-1].copy()
-            new_row[4] = predicted_scaled  
+            new_row[4] = predicted_scaled
             last_lookback = np.concatenate([last_lookback[1:], new_row.reshape(1, -1)], axis=0)
         
         target_min = scaler.data_min_[4]
         target_max = scaler.data_max_[4]
         forecast = np.array(predictions).reshape(-1, 1) * (target_max - target_min) + target_min
+        
         forecast_df = pd.DataFrame(forecast, index=future_dates, columns=['Predicted Price'])
         
         last_month_date = data.index[-1] - pd.DateOffset(months=1)
@@ -73,6 +64,19 @@ def predict_future(data, start_date, end_date, model_path, lookback=60):
         plt.figure(figsize=(12,6))
         plt.plot(last_month_data.index, last_month_data['Adj Close'], label='Historical Data (Last Month)', color='blue')
         plt.plot(forecast_df.index, forecast_df['Predicted Price'], label='Forecast', color='red')
+        
+        min_price = forecast_df['Predicted Price'].min()
+        min_date = forecast_df['Predicted Price'].idxmin()
+        plt.annotate('Min', xy=(min_date, min_price), xytext=(min_date, min_price * 0.95),
+                     arrowprops=dict(arrowstyle="->", color='green'),
+                     horizontalalignment='center', verticalalignment='bottom')
+        
+        max_price = forecast_df['Predicted Price'].max()
+        max_date = forecast_df['Predicted Price'].idxmax()
+        plt.annotate('Max', xy=(max_date, max_price), xytext=(max_date, max_price * 1.05),
+                     arrowprops=dict(arrowstyle="->", color='red'),
+                     horizontalalignment='center', verticalalignment='top')
+        
         plt.title('LSTM Model Forecast')
         plt.xlabel('Date')
         plt.ylabel('Price')
@@ -85,9 +89,7 @@ def predict_future(data, start_date, end_date, model_path, lookback=60):
         raise
 
 def MaximizeIncome(forecast):
-    """
-    Determines the best buy and sell days within the forecast period to maximize profit.
-    """
+
     initial_money = 10000
     max_profit = 0
     best_buy_day = -1

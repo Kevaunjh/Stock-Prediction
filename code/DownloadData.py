@@ -4,14 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 def clean_csv_file(file_path):
-    """
-    Cleans the CSV file by:
-      - Keeping the header if it starts with 'Date'.
-      - Removing any non-header lines that do not start with a digit.
-      - Parsing 'Date' as an actual date column.
-      - Dropping the 'Volume' column if it exists.
-      - Reordering columns so that 'Date' is first.
-    """
+
     with open(file_path, 'r') as f:
         lines = f.readlines()
 

@@ -17,11 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 tf.config.run_functions_eagerly(True)
 
 def load_data(file_path):
-    """
-    Loads data from CSV, expecting columns:
-    ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close'] (no 'Volume').
-    Indexes by 'Date' as a DateTime.
-    """
+
     try:
         data = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
         logging.info("Data loaded successfully. Data shape: %s", data.shape)
@@ -34,12 +30,7 @@ def load_data(file_path):
         raise
 
 def preprocess_data(data, lookback=60):
-    """
-    Preprocesses data by:
-      - Selecting basic features (Open, High, Low, Close, Adj Close).
-      - Scaling them between 0 and 1.
-      - Creating sequences of length 'lookback' for the LSTM.
-    """
+
     try:
         for col in data.columns:
             data[col] = pd.to_numeric(data[col], errors='coerce')
@@ -73,9 +64,7 @@ def preprocess_data(data, lookback=60):
         raise
 
 def build_lstm_model(input_shape):
-    """
-    Builds an LSTM model with sufficient capacity to capture trends from basic price features.
-    """
+
     model = Sequential([
         Input(shape=input_shape),
         LSTM(100, return_sequences=True),
