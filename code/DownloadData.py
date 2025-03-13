@@ -4,44 +4,54 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 def clean_csv_file(file_path):
+    """
+    Cleans the CSV file by:
+      - Keeping the header if it starts with 'Date'.
+      - Removing any non-header lines that do not start with a digit.
+      - Parsing 'Date' as an actual date column.
+      - Dropping the 'Volume' column if it exists.
+      - Reordering columns so that 'Date' is first.
+    """
     with open(file_path, 'r') as f:
         lines = f.readlines()
-        cleaned_lines = []
-    for line in lines:
+
+    cleaned_lines = []
+    for i, line in enumerate(lines):
         stripped = line.lstrip()
-        if stripped and stripped[0].isdigit():
+        if i == 0 and stripped.startswith("Date"):
             cleaned_lines.append(line)
-    header = "Date,Adj Close,Close,High,Low,Open\n"
-    cleaned_lines.insert(0, header)
-    
+        elif stripped and stripped[0].isdigit():
+            cleaned_lines.append(line)
+
+    if not cleaned_lines or not cleaned_lines[0].startswith("Date"):
+        header = "Date,Adj Close,Close,High,Low,Open\n"
+        cleaned_lines.insert(0, header)
+
     with open(file_path, 'w') as f:
         f.writelines(cleaned_lines)
-    
-    df = pd.read_csv(file_path)
+
+    df = pd.read_csv(file_path, parse_dates=['Date'])
+
     if "Volume" in df.columns:
         df.drop(columns=["Volume"], inplace=True)
-    
+
     desired_order = ['Date', 'Adj Close', 'Close', 'High', 'Low', 'Open']
-    df = df[desired_order]
+    existing_cols = [col for col in desired_order if col in df.columns]
+    df = df[existing_cols]
+
     df.to_csv(file_path, index=False)
     return df
-file_path = './../data/stock_data.csv'
+
+file_path = "./../data/stock_data.csv"
 ticker = 'TSLA'
-start_date = (datetime.today() - timedelta(days=30)).strftime('%Y-%m-%d')
-end_date = datetime.today().strftime('%Y-%m-%d')
+print("Downloading data for the last 60 calendar days...")
+data = yf.download(ticker, period='60d')
 
-if os.path.exists(file_path):
-    print("File exists. Cleaning up the CSV file...")
-    df = clean_csv_file(file_path)
-    print("Cleaned Data:")
-    print(df.head())
-else:
-    print("File does not exist. Downloading data...")
-    data = yf.download(ticker, start=start_date, end=end_date)
-    data.index = data.index.date
-    data.to_csv(file_path, index_label="Date")
-    df = clean_csv_file(file_path)
-    print("Downloaded and cleaned Data:")
-    print(df.head())
+last_30_data = data.tail(30)
+last_30_data.index = last_30_data.index.date
+last_30_data.to_csv(file_path, index_label="Date")
+df = clean_csv_file(file_path)
 
+print("Cleaned Data (Last 30 Trading Days):")
+print(df.head())
 print(f"Data is saved in {file_path}")

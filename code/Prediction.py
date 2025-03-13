@@ -6,23 +6,34 @@ import logging
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
+from datetime import timedelta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def load_data(file_path):
+    """
+    Loads data from CSV and expects columns: 
+    ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close'].
+    Indexes by "Date" (parsed as DateTime).
+    """
     try:
-        data = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date') 
-        data = data[['Adj Close']].dropna()
-        logging.info("Data loaded and preprocessed successfully.")
+        data = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
+        data.index = pd.to_datetime(data.index)
+
+        data = data[['Open', 'High', 'Low', 'Close', 'Adj Close']].dropna()
+        logging.info("Data loaded successfully. Data shape: %s", data.shape)
         return data
-    except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
-        raise
     except Exception as e:
-        logging.error(f"Error loading or preprocessing data: {e}")
+        logging.error("Error loading data: %s", e)
         raise
 
 def predict_future(data, start_date, end_date, model_path, lookback=60):
+    """
+    Loads the trained model from model_path, scales the data using all 5 features,
+    and uses the last 'lookback' days to forecast the next 7 business days.
+    The predicted target is the 'Adj Close' (column index 4).
+    Returns a DataFrame with the forecasted prices.
+    """
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
@@ -32,31 +43,51 @@ def predict_future(data, start_date, end_date, model_path, lookback=60):
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaled_data = scaler.fit_transform(data)
         
-        last_lookback = scaled_data[-lookback:]
+        if len(scaled_data) < lookback:
+            pad_length = lookback - len(scaled_data)
+            pad_array = np.repeat(scaled_data[0:1], pad_length, axis=0)
+            scaled_data = np.concatenate([pad_array, scaled_data], axis=0)
+            logging.info("Data padded: original length %d, padded to %d", len(data), len(scaled_data))
+        
+        last_lookback = scaled_data[-lookback:]  
         predictions = []
         future_dates = pd.date_range(start=start_date, end=end_date, freq='B')
         
         for _ in range(len(future_dates)):
-            input_data = last_lookback.reshape((1, lookback, 1))
-            predicted_price = model.predict(input_data)[0, 0]
-            predictions.append(predicted_price)
-            last_lookback = np.append(last_lookback[1:], predicted_price).reshape(-1, 1)
+            input_data = last_lookback.reshape((1, lookback, scaled_data.shape[1])) 
+            predicted_scaled = model.predict(input_data)[0, 0]
+            predictions.append(predicted_scaled)
+
+            new_row = last_lookback[-1].copy()
+            new_row[4] = predicted_scaled  
+            last_lookback = np.concatenate([last_lookback[1:], new_row.reshape(1, -1)], axis=0)
         
-        forecast = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
+        target_min = scaler.data_min_[4]
+        target_max = scaler.data_max_[4]
+        forecast = np.array(predictions).reshape(-1, 1) * (target_max - target_min) + target_min
         forecast_df = pd.DataFrame(forecast, index=future_dates, columns=['Predicted Price'])
         
-        plt.figure(figsize=(12, 6))
-        plt.plot(data, label='Historical Data')
-        plt.plot(forecast_df, label='Forecast', color='red')
+        last_month_date = data.index[-1] - pd.DateOffset(months=1)
+        last_month_data = data.loc[data.index >= last_month_date]
+        
+        plt.figure(figsize=(12,6))
+        plt.plot(last_month_data.index, last_month_data['Adj Close'], label='Historical Data (Last Month)', color='blue')
+        plt.plot(forecast_df.index, forecast_df['Predicted Price'], label='Forecast', color='red')
         plt.title('LSTM Model Forecast')
+        plt.xlabel('Date')
+        plt.ylabel('Price')
         plt.legend()
+        plt.show()
         
         return forecast_df
     except Exception as e:
-        logging.error(f"Error during prediction: {e}")
+        logging.error("Error during prediction: %s", e)
         raise
 
 def MaximizeIncome(forecast):
+    """
+    Determines the best buy and sell days within the forecast period to maximize profit.
+    """
     initial_money = 10000
     max_profit = 0
     best_buy_day = -1
@@ -75,31 +106,32 @@ def MaximizeIncome(forecast):
                 best_sell_day = sell_day
     
     if max_profit > 0:
-        buy_price = forecast.iloc[best_buy_day]["Predicted Price"]
-        sell_price = forecast.iloc[best_sell_day]["Predicted Price"]
-        print(f"Day {best_buy_day + 1}: Buy at ${buy_price:.2f}")
-        print(f"Day {best_sell_day + 1}: Sell at ${sell_price:.2f}")
-        print(f"Profit from this transaction: ${max_profit:.2f}")
-        print(f"Your total balance after the transaction: ${initial_money + max_profit:.2f}")
+        print(f"Day {best_buy_day + 1}: Buy at ${forecast.iloc[best_buy_day]['Predicted Price']:.2f}")
+        print(f"Day {best_sell_day + 1}: Sell at ${forecast.iloc[best_sell_day]['Predicted Price']:.2f}")
+        print(f"Profit from transaction: ${max_profit:.2f}")
+        print(f"Total balance after transaction: ${initial_money + max_profit:.2f}")
     else:
         print("No possible way to benefit in money.")
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Predict stock prices using a trained LSTM model.")
     parser.add_argument("--data_path", type=str, default="./../data/stock_data.csv", help="Path to the stock data CSV file.")
-    parser.add_argument("--start_date", type=str, required=True, help="Start date for prediction (YYYY-MM-DD).")
-    parser.add_argument("--end_date", type=str, required=True, help="End date for prediction (YYYY-MM-DD).")
     parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5", help="Path to the trained LSTM model file.")
     args = parser.parse_args()
     
     try:
         data = load_data(args.data_path)
-        forecast = predict_future(data, args.start_date, args.end_date, args.model_path)
+        last_date = data.index[-1]
+        future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=7)
+        start_date = future_dates[0].strftime('%Y-%m-%d')
+        end_date = future_dates[-1].strftime('%Y-%m-%d')
+        logging.info("Forecasting from %s to %s", start_date, end_date)
+        
+        forecast = predict_future(data, start_date, end_date, args.model_path)
         print("Forecasted values:")
         print(forecast)
         MaximizeIncome(forecast)
-        plt.show()
     except Exception as e:
-        logging.error(f"Execution failed: {e}")
+        logging.error("Execution failed: %s", e)
