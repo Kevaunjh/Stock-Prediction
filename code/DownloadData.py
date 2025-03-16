@@ -36,6 +36,11 @@ def clean_csv_file(file_path):
 
 def main():
     file_path = "./../data/stock_data.csv"
+    
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        print(f"Existing file '{file_path}' has been deleted.")
+    
     ticker = 'TSLA'
     print("Downloading data for the last 60 calendar days...")
     data = yf.download(ticker, period='60d')

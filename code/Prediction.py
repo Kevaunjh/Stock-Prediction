@@ -6,7 +6,7 @@ import logging
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -21,135 +21,374 @@ def load_data(file_path):
         logging.error("Error loading data: %s", e)
         raise
 
-def predict_future(data, start_date, end_date, model_path, lookback=60):
+def load_metrics():
+    try:
+        metrics_path = './../data/final_model_metrics.csv'
+        cv_metrics_path = './../data/cross_validation_metrics.csv'
+        
+        if os.path.exists(metrics_path):
+            metrics = pd.read_csv(metrics_path).to_dict('records')[0]
+            logging.info("Model metrics loaded successfully")
+        else:
+            metrics = {"Direction Accuracy": None, "MAPE": None, "R2": None}
+            logging.warning("No model metrics found")
+            
+        if os.path.exists(cv_metrics_path):
+            cv_metrics = pd.read_csv(cv_metrics_path)
+            cv_avg = cv_metrics.mean().to_dict()
+            logging.info("Cross-validation metrics loaded successfully")
+        else:
+            cv_avg = {}
+            logging.warning("No cross-validation metrics found")
+            
+        return metrics, cv_avg
+    except Exception as e:
+        logging.error(f"Error loading metrics: {e}")
+        return {}, {}
+
+def calculate_recent_trend(data, window=5):
+    """Calculate the recent trend direction and strength from historical data"""
+    if data is None or len(data) == 0:
+        return 0
+        
+    if len(data) < window:
+        window = len(data)
+    
+    recent_data = data['Adj Close'].iloc[-window:]
+
+    x = np.arange(len(recent_data))
+    y = recent_data.values
+
+    if len(x) > 1: 
+        slope, _ = np.polyfit(x, y, 1)
+        
+        avg_price = np.mean(recent_data)
+        normalized_slope = slope / avg_price * 100 
+        
+
+        trend_strength = max(min(normalized_slope, 1), -1)
+    else:
+        trend_strength = 0
+        
+    return trend_strength
+
+def apply_adaptive_noise(base_prediction, trend_strength, confidence, volatility):
+    """Apply adaptive noise to predictions based on trend strength and confidence"""
+    noise_scale = volatility * (1 - confidence)
+    
+    directional_bias = trend_strength * confidence
+    
+    noise = np.random.normal(directional_bias, noise_scale)
+    
+    return base_prediction * (1 + noise/100) 
+
+def calculate_volatility(data, window=10):
+    """Calculate historical volatility as standard deviation of daily returns"""
+    if len(data) < 2:
+        return 0.01 
+        
+    returns = data['Adj Close'].pct_change().dropna()
+    
+    if len(returns) < window:
+        window = len(returns)
+        
+    recent_returns = returns.iloc[-window:]
+    volatility = recent_returns.std() * 100 
+    
+    return max(volatility, 0.01)  
+
+def predict_future(data, start_date, end_date, model_path, lookback=10):
+    """
+    Generate forecasted prices with adaptive directional confidence.
+    """
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
         
+        if data is None or len(data) == 0:
+            raise ValueError("Empty dataset provided for prediction")
+        
+        future_dates = pd.date_range(start=start_date, end=end_date, freq='B')
+        if len(future_dates) == 0:
+            logging.warning("No business days in prediction range")
+            return pd.DataFrame(columns=['Predicted Price', 'MAPE', 'Lower Bound', 'Upper Bound'])
+            
         model = load_model(model_path)
-
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaled_data = scaler.fit_transform(data)
-
-
-        if len(scaled_data) < lookback:
-            pad_length = lookback - len(scaled_data)
-            pad_array = np.repeat(scaled_data[0:1], pad_length, axis=0)
-            scaled_data = np.concatenate([pad_array, scaled_data], axis=0)
-            logging.info("Data padded: original length %d, padded to %d", len(data), len(scaled_data))
         
-        last_lookback = scaled_data[-lookback:] 
-        predictions = []
-        future_dates = pd.date_range(start=start_date, end=end_date, freq='B')
+        if len(scaled_data) < lookback:
+            lookback = max(1, len(scaled_data) - 1)
+            logging.warning(f"Lookback window reduced to {lookback} due to limited data")
+        
+        metrics, _ = load_metrics()
+        direction_confidence = metrics.get('Direction Accuracy', 0.55) 
+        
+        trend_strength = calculate_recent_trend(data)
+        volatility = calculate_volatility(data)
+        logging.info(f"Recent trend strength: {trend_strength:.4f}, Volatility: {volatility:.4f}%")
+        
+        if len(scaled_data) < lookback:
+            logging.error(f"Not enough data for lookback of {lookback}, only {len(scaled_data)} points available")
+            lookback = len(scaled_data) - 1
+            if lookback < 1:
+                raise ValueError("Not enough data points for prediction")
+        
+        last_lookback = scaled_data[-lookback:]
+        
+        current_lookback = last_lookback.copy()
+        base_predictions = []
         
         for _ in range(len(future_dates)):
-            input_data = last_lookback.reshape((1, lookback, scaled_data.shape[1]))
-            predicted_scaled = model.predict(input_data)[0, 0]
-            predictions.append(predicted_scaled)
-
-            new_row = last_lookback[-1].copy()
-            new_row[4] = predicted_scaled
-            last_lookback = np.concatenate([last_lookback[1:], new_row.reshape(1, -1)], axis=0)
+            input_data = current_lookback.reshape((1, lookback, scaled_data.shape[1]))
+            predicted_scaled = model.predict(input_data, verbose=0)[0, 0]
+            base_predictions.append(predicted_scaled)
+            
+            new_row = current_lookback[-1].copy()
+            new_row[4] = predicted_scaled  
+            current_lookback = np.concatenate([current_lookback[1:], new_row.reshape(1, -1)], axis=0)
         
+        if not base_predictions:
+            logging.error("No predictions generated")
+            return pd.DataFrame(columns=['Predicted Price', 'MAPE', 'Lower Bound', 'Upper Bound'])
+        
+
         target_min = scaler.data_min_[4]
         target_max = scaler.data_max_[4]
-        forecast = np.array(predictions).reshape(-1, 1) * (target_max - target_min) + target_min
+        base_pred_prices = np.array(base_predictions).reshape(-1, 1) * (target_max - target_min) + target_min
         
-        forecast_df = pd.DataFrame(forecast, index=future_dates, columns=['Predicted Price'])
+        current_lookback = last_lookback.copy()
+        adjusted_predictions = []
+        
+        last_actual_price = (current_lookback[-1, 4] * (target_max - target_min) + target_min)
+        current_price = last_actual_price
+        
+        for i in range(len(future_dates)):
+            if i > 0 and len(adjusted_predictions) >= 2:
+                recent_pred_trend = np.sign(adjusted_predictions[-1] - adjusted_predictions[-2])
+                blend_factor = min(i / 3, 0.8)  
+                trend_strength = trend_strength * (1 - blend_factor) + recent_pred_trend * blend_factor
+            
+            input_data = current_lookback.reshape((1, lookback, scaled_data.shape[1]))
+            raw_predicted_scaled = model.predict(input_data, verbose=0)[0, 0]
+            raw_predicted_price = raw_predicted_scaled * (target_max - target_min) + target_min
+            if i == 0:
+                base_change_pct = (raw_predicted_price - current_price) / current_price
+            else:
+                base_change_pct = (raw_predicted_price - adjusted_predictions[-1]) / adjusted_predictions[-1]
+            
+            confidence_factor = direction_confidence
+            
+            adjusted_change_pct = base_change_pct * (1 + trend_strength * confidence_factor)
+            
+            adjusted_change_pct = apply_adaptive_noise(
+                adjusted_change_pct, 
+                trend_strength, 
+                confidence_factor,
+                volatility
+            )
+            
+            if i == 0:
+                new_price = current_price * (1 + adjusted_change_pct)
+            else:
+                new_price = adjusted_predictions[-1] * (1 + adjusted_change_pct)
+            
+            adjusted_predictions.append(new_price)
+            
+            new_scaled_price = (new_price - target_min) / (target_max - target_min)
+            new_row = current_lookback[-1].copy()
+            new_row[4] = new_scaled_price
+            current_lookback = np.concatenate([current_lookback[1:], new_row.reshape(1, -1)], axis=0)
 
-        last_month_date = data.index[-1] - pd.DateOffset(months=1)
-        last_month_data = data.loc[data.index >= last_month_date]
+        if not adjusted_predictions:
+            logging.error("No adjusted predictions generated")
+            return pd.DataFrame(columns=['Predicted Price', 'MAPE', 'Lower Bound', 'Upper Bound'])
         
-        plt.figure(figsize=(12,6))
-        plt.plot(last_month_data.index, last_month_data['Adj Close'], label='Historical Data (Last Month)')
-        plt.plot(forecast_df.index, forecast_df['Predicted Price'], label='Forecast')
+        forecast_df = pd.DataFrame(adjusted_predictions, index=future_dates, columns=['Predicted Price'])
         
-        min_price = forecast_df['Predicted Price'].min()
-        min_date = forecast_df['Predicted Price'].idxmin()
-        plt.annotate('Min', xy=(min_date, min_price), xytext=(min_date, min_price * 0.95),
-                     arrowprops=dict(arrowstyle="->"),
-                     horizontalalignment='center', verticalalignment='bottom')
+        mape = metrics.get('MAPE', 5.0)  
         
-        max_price = forecast_df['Predicted Price'].max()
-        max_date = forecast_df['Predicted Price'].idxmax()
-        plt.annotate('Max', xy=(max_date, max_price), xytext=(max_date, max_price * 1.05),
-                     arrowprops=dict(arrowstyle="->"),
-                     horizontalalignment='center', verticalalignment='top')
+        intervals = []
+        for i in range(len(future_dates)):
+            time_factor = 1 + (i / len(future_dates)) * 0.5  
+            interval = mape * time_factor
+            intervals.append(interval)
         
-        plt.title('LSTM Model Forecast')
-        plt.xlabel('Date')
-        plt.ylabel('Price')
-        plt.legend()
-        plt.show()
+        forecast_df['MAPE'] = intervals
+        forecast_df['Lower Bound'] = forecast_df['Predicted Price'] * (1 - forecast_df['MAPE']/100)
+        forecast_df['Upper Bound'] = forecast_df['Predicted Price'] * (1 + forecast_df['MAPE']/100)
         
         return forecast_df
     except Exception as e:
         logging.error("Error during prediction: %s", e)
         raise
 
-def MaximizeIncome(forecast):
+def simulate_trading(sim_df, initial_cash=10000):
 
-    initial_money = 10000
-    max_profit = 0
-    best_buy_day = -1
-    best_sell_day = -1
+    if sim_df is None or len(sim_df) < 2:
+        logging.error("Not enough data for simulation")
+        return pd.DataFrame() 
     
-    for buy_day in range(len(forecast) - 1):
-        for sell_day in range(buy_day + 1, len(forecast)):
-            buy_price = forecast.iloc[buy_day]["Predicted Price"]
-            sell_price = forecast.iloc[sell_day]["Predicted Price"]
-            effective_buy_price = buy_price * 1.01
-            effective_sell_price = sell_price * 0.99
-            profit = effective_sell_price - effective_buy_price
-            if profit > max_profit:
-                max_profit = profit
-                best_buy_day = buy_day
-                best_sell_day = sell_day
+    cash = initial_cash
+    shares = 0
+    log = []  
     
-    if max_profit > 0:
-        print(f"Day {best_buy_day + 1}: Buy at ${forecast.iloc[best_buy_day]['Predicted Price']:.2f}")
-        print(f"Day {best_sell_day + 1}: Sell at ${forecast.iloc[best_sell_day]['Predicted Price']:.2f}")
-        print(f"Profit from transaction: ${max_profit:.2f}")
-        print(f"Total balance after transaction: ${initial_money + max_profit:.2f}")
-    else:
-        print("No possible way to benefit in money.")
+    dates = sim_df.index
+    prices = sim_df['Predicted Price'].values
+
+    portfolio_value = cash 
+    log.append((dates[0], "Start", prices[0], shares, cash, portfolio_value))
+    
+    for i in range(1, len(prices)):
+        prev_price = prices[i - 1]
+        curr_price = prices[i]
+        action = "Hold"
+
+        if curr_price > prev_price:
+            if shares == 0:
+                shares = cash / prev_price  
+                cash = 0
+                action = "Buy"
+            else:
+                action = "Hold"
+        elif curr_price < prev_price:
+            if shares > 0:
+                cash = shares * prev_price  
+                shares = 0
+                action = "Sell"
+            else:
+                action = "Hold"
+        portfolio_value = cash + shares * curr_price
+        log.append((dates[i], action, curr_price, shares, cash, portfolio_value))
+    
+    if shares > 0:
+        final_price = prices[-1]
+        cash = shares * final_price
+        shares = 0
+        portfolio_value = cash
+        log.append((dates[-1], "Final Sell", final_price, shares, cash, portfolio_value))
+    
+    if not log:
+        logging.error("No trading activity recorded")
+        return pd.DataFrame(columns=["Date", "Action", "Price", "Shares", "Cash", "Portfolio Value"])
+    
+    simulation_df = pd.DataFrame(log, columns=["Date", "Action", "Price", "Shares", "Cash", "Portfolio Value"])
+    simulation_df.set_index("Date", inplace=True)
+    return simulation_df
 
 def main(data_path="./../data/stock_data.csv",
          model_path="./../model/lstm_model.h5",
-         days_to_predict=7):
-
+         days_to_predict=7,
+         lookback=10):
     try:
         data = load_data(data_path)
-        last_date = data.index[-1]
+        
+        if data is None or len(data) == 0:
+            logging.error("No data available for prediction")
+            return None, None
+        
+        last_actual = data['Adj Close'].iloc[-1]
+        
+        today = pd.Timestamp.today().normalize()
+        forecast_start = today + pd.DateOffset(days=1)
+        forecast_end = forecast_start + pd.DateOffset(days=days_to_predict - 1)
 
-        # Example: forecast the next `days_to_predict` business days
-        future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1),
-                                      periods=days_to_predict)
-        start_date = future_dates[0].strftime('%Y-%m-%d')
-        end_date = future_dates[-1].strftime('%Y-%m-%d')
-        logging.info("Forecasting from %s to %s", start_date, end_date)
+        forecast_df = predict_future(data, forecast_start, forecast_end, model_path, lookback)
         
-        forecast = predict_future(data, start_date, end_date, model_path)
-        print("Forecasted values:")
-        print(forecast)
+        if forecast_df.empty:
+            logging.error("No forecast generated")
+            return None, None
         
-        MaximizeIncome(forecast)
+        today_row = pd.DataFrame({
+            'Predicted Price': [last_actual],
+            'Lower Bound': [last_actual],
+            'Upper Bound': [last_actual],
+            'MAPE': [0] 
+        }, index=[today])
+        sim_df = pd.concat([today_row, forecast_df])
+        
+        trading_log = simulate_trading(sim_df, initial_cash=10000)
+        
+        if trading_log.empty:
+            logging.error("No trading simulation results")
+            return sim_df, None
+        
+        last_month_date = data.index[-1] - pd.DateOffset(months=1)
+        historical = data.loc[data.index >= last_month_date]
+        if today not in historical.index:
+            historical = pd.concat([historical, pd.DataFrame({'Adj Close': [last_actual]}, index=[today])])
+
+        plt.figure(figsize=(14, 8))
+        
+        plt.plot(historical.index, historical['Adj Close'], label='Historical Data', color='blue')
+        
+        plt.plot(sim_df.index, sim_df['Predicted Price'], label='Forecast', color='red', linestyle='-')
+        
+        plt.fill_between(sim_df.index,
+                        sim_df['Lower Bound'],
+                        sim_df['Upper Bound'],
+                        color='red', alpha=0.2,
+                        label='Confidence Interval')
+        
+        plt.axvline(x=today, color='black', linestyle='--', alpha=0.7, label='Today')
+        
+        buy_plotted = False
+        sell_plotted = False
+        
+        for idx, row in trading_log.iterrows():
+            if row['Action'] == 'Buy' and not buy_plotted:
+                plt.scatter(idx, row['Price'], marker='^', color='green', s=100, label='Buy')
+                buy_plotted = True
+            elif row['Action'] == 'Buy':
+                plt.scatter(idx, row['Price'], marker='^', color='green', s=100)
+            elif (row['Action'] == 'Sell' or row['Action'] == 'Final Sell') and not sell_plotted:
+                plt.scatter(idx, row['Price'], marker='v', color='purple', s=100, label='Sell')
+                sell_plotted = True
+            elif row['Action'] == 'Sell' or row['Action'] == 'Final Sell':
+                plt.scatter(idx, row['Price'], marker='v', color='purple', s=100)
+        
+        plt.title('TSLA Stock Price Forecast & Trading Simulation')
+        plt.xlabel('Date')
+        plt.ylabel('Price ($)')
+        plt.legend(loc='best')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('./../data/forecast_simulation_plot.png')
+        plt.show()
+
+        print("\n======== TRADING SIMULATION LOG ========")
+        for dt, row in trading_log.iterrows():
+            print(f"{dt.date()}: Action={row['Action']}, Price=${row['Price']:.2f}, "
+                  f"Cash=${row['Cash']:.2f}, Shares={row['Shares']:.4f}, "
+                  f"Portfolio=${row['Portfolio Value']:.2f}")
+        print("========================================\n")
+        
+        final_portfolio = trading_log.iloc[-1]['Portfolio Value']
+        profit = final_portfolio - 10000
+        print(f"Final Portfolio Value: ${final_portfolio:.2f} (Profit: ${profit:.2f})")
+        
+        return sim_df, trading_log
     except Exception as e:
-        logging.error("Execution failed: %s", e)
-        raise
+        logging.error(f"Prediction execution failed: {e}")
+        print(f"\nERROR: {e}")
+        print("Please check the logs for details.")
+        return None, None
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Predict stock prices using a trained LSTM model."
+        description="Predict future stock prices with direction-based forecast and simulate trading decisions."
     )
+    parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5", 
+                        help="Path to the trained LSTM model.")
     parser.add_argument("--data_path", type=str, default="./../data/stock_data.csv",
                         help="Path to the stock data CSV file.")
-    parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5",
-                        help="Path to the trained LSTM model file.")
-    parser.add_argument("--days_to_predict", type=int, default=7,
-                        help="Number of future business days to forecast.")
-
+    parser.add_argument("--days", type=int, default=7,
+                        help="Number of business days to predict.")
+    parser.add_argument("--lookback", type=int, default=10,
+                        help="Number of time steps to look back for each prediction.")
+    
     args = parser.parse_args()
-    main(args.data_path, args.model_path, args.days_to_predict)
+    main(model_path=args.model_path, data_path=args.data_path, 
+         days_to_predict=args.days, lookback=args.lookback)
