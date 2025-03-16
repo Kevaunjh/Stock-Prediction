@@ -11,7 +11,6 @@ from datetime import timedelta
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def load_data(file_path):
-
     try:
         data = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
         data.index = pd.to_datetime(data.index)
@@ -23,16 +22,15 @@ def load_data(file_path):
         raise
 
 def predict_future(data, start_date, end_date, model_path, lookback=60):
-
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
         
         model = load_model(model_path)
-        
 
         scaler = MinMaxScaler(feature_range=(0, 1))
         scaled_data = scaler.fit_transform(data)
+
 
         if len(scaled_data) < lookback:
             pad_length = lookback - len(scaled_data)
@@ -48,6 +46,7 @@ def predict_future(data, start_date, end_date, model_path, lookback=60):
             input_data = last_lookback.reshape((1, lookback, scaled_data.shape[1]))
             predicted_scaled = model.predict(input_data)[0, 0]
             predictions.append(predicted_scaled)
+
             new_row = last_lookback[-1].copy()
             new_row[4] = predicted_scaled
             last_lookback = np.concatenate([last_lookback[1:], new_row.reshape(1, -1)], axis=0)
@@ -57,24 +56,24 @@ def predict_future(data, start_date, end_date, model_path, lookback=60):
         forecast = np.array(predictions).reshape(-1, 1) * (target_max - target_min) + target_min
         
         forecast_df = pd.DataFrame(forecast, index=future_dates, columns=['Predicted Price'])
-        
+
         last_month_date = data.index[-1] - pd.DateOffset(months=1)
         last_month_data = data.loc[data.index >= last_month_date]
         
         plt.figure(figsize=(12,6))
-        plt.plot(last_month_data.index, last_month_data['Adj Close'], label='Historical Data (Last Month)', color='blue')
-        plt.plot(forecast_df.index, forecast_df['Predicted Price'], label='Forecast', color='red')
+        plt.plot(last_month_data.index, last_month_data['Adj Close'], label='Historical Data (Last Month)')
+        plt.plot(forecast_df.index, forecast_df['Predicted Price'], label='Forecast')
         
         min_price = forecast_df['Predicted Price'].min()
         min_date = forecast_df['Predicted Price'].idxmin()
         plt.annotate('Min', xy=(min_date, min_price), xytext=(min_date, min_price * 0.95),
-                     arrowprops=dict(arrowstyle="->", color='green'),
+                     arrowprops=dict(arrowstyle="->"),
                      horizontalalignment='center', verticalalignment='bottom')
         
         max_price = forecast_df['Predicted Price'].max()
         max_date = forecast_df['Predicted Price'].idxmax()
         plt.annotate('Max', xy=(max_date, max_price), xytext=(max_date, max_price * 1.05),
-                     arrowprops=dict(arrowstyle="->", color='red'),
+                     arrowprops=dict(arrowstyle="->"),
                      horizontalalignment='center', verticalalignment='top')
         
         plt.title('LSTM Model Forecast')
@@ -115,25 +114,42 @@ def MaximizeIncome(forecast):
     else:
         print("No possible way to benefit in money.")
 
-if __name__ == "__main__":
-    import argparse
+def main(data_path="./../data/stock_data.csv",
+         model_path="./../model/lstm_model.h5",
+         days_to_predict=7):
 
-    parser = argparse.ArgumentParser(description="Predict stock prices using a trained LSTM model.")
-    parser.add_argument("--data_path", type=str, default="./../data/stock_data.csv", help="Path to the stock data CSV file.")
-    parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5", help="Path to the trained LSTM model file.")
-    args = parser.parse_args()
-    
     try:
-        data = load_data(args.data_path)
+        data = load_data(data_path)
         last_date = data.index[-1]
-        future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1), periods=7)
+
+        # Example: forecast the next `days_to_predict` business days
+        future_dates = pd.bdate_range(start=last_date + pd.Timedelta(days=1),
+                                      periods=days_to_predict)
         start_date = future_dates[0].strftime('%Y-%m-%d')
         end_date = future_dates[-1].strftime('%Y-%m-%d')
         logging.info("Forecasting from %s to %s", start_date, end_date)
         
-        forecast = predict_future(data, start_date, end_date, args.model_path)
+        forecast = predict_future(data, start_date, end_date, model_path)
         print("Forecasted values:")
         print(forecast)
+        
         MaximizeIncome(forecast)
     except Exception as e:
         logging.error("Execution failed: %s", e)
+        raise
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Predict stock prices using a trained LSTM model."
+    )
+    parser.add_argument("--data_path", type=str, default="./../data/stock_data.csv",
+                        help="Path to the stock data CSV file.")
+    parser.add_argument("--model_path", type=str, default="./../model/lstm_model.h5",
+                        help="Path to the trained LSTM model file.")
+    parser.add_argument("--days_to_predict", type=int, default=7,
+                        help="Number of future business days to forecast.")
+
+    args = parser.parse_args()
+    main(args.data_path, args.model_path, args.days_to_predict)

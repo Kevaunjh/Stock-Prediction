@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 def clean_csv_file(file_path):
-
     with open(file_path, 'r') as f:
         lines = f.readlines()
 
@@ -35,16 +34,21 @@ def clean_csv_file(file_path):
     df.to_csv(file_path, index=False)
     return df
 
-file_path = "./../data/stock_data.csv"
-ticker = 'TSLA'
-print("Downloading data for the last 60 calendar days...")
-data = yf.download(ticker, period='60d')
+def main():
+    file_path = "./../data/stock_data.csv"
+    ticker = 'TSLA'
+    print("Downloading data for the last 60 calendar days...")
+    data = yf.download(ticker, period='60d')
 
-last_30_data = data.tail(30)
-last_30_data.index = last_30_data.index.date
-last_30_data.to_csv(file_path, index_label="Date")
-df = clean_csv_file(file_path)
+    last_30_data = data.tail(50)
+    last_30_data.index = last_30_data.index.date
+    last_30_data.to_csv(file_path, index_label="Date")
 
-print("Cleaned Data (Last 30 Trading Days):")
-print(df.head())
-print(f"Data is saved in {file_path}")
+    df = clean_csv_file(file_path)
+
+    print("Cleaned Data (Last 30 Trading Days):")
+    print(df.head())
+    print(f"Data is saved in {file_path}")
+
+if __name__ == "__main__":
+    main()
