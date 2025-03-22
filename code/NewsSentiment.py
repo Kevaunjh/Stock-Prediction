@@ -453,7 +453,7 @@ class NewsSentimentAnalyzer:
 def prepare_sentiment_features(data_path="./../data/stock_data.csv", 
                               output_path="./../data/stock_data_with_sentiment.csv",
                               lookback_days=60,
-                              newsapi_key="YOUR_NEWSAPI_KEY"):
+                              newsapi_key="06317fc92c2c4336ac58576138f827f8"):
     try:
         stock_data = pd.read_csv(data_path, parse_dates=['Date'], index_col='Date')
         logging.info(f"Loaded stock data from {data_path}, shape: {stock_data.shape}")
@@ -543,7 +543,7 @@ def main(data_path="./../data/stock_data.csv",
          output_path="./../data/stock_data_with_sentiment.csv",
          lookback_days=50,
          sentiment_weight=0.3,
-         newsapi_key="YOUR_NEWSAPI_KEY"):
+         newsapi_key="06317fc92c2c4336ac58576138f827f8"):
     try:
         augmented_data = prepare_sentiment_features(
             data_path=data_path,
@@ -591,7 +591,7 @@ if __name__ == "__main__":
     parser.add_argument("--sentiment_weight", type=float, default=0.6,
                         help="Weight to apply to sentiment features (0-1)")
     parser.add_argument("--newsapi_key", type=str, required=True,
-                        help="Your NewsAPI API key")
+                        help="06317fc92c2c4336ac58576138f827f8")
     
     args = parser.parse_args()
     
