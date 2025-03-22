@@ -22,19 +22,22 @@ except LookupError:
     nltk.download('punkt')
 
 class NewsSentimentAnalyzer:
-    def __init__(self, ticker="TSLA", lookback_days=30, cache_file="./../data/news_sentiment_cache.json"):
-
+    def __init__(self, ticker="TSLA", lookback_days=30, cache_file="./../data/news_sentiment_cache.json", 
+                 newsapi_key="06317fc92c2c4336ac58576138f827f8"):
         self.ticker = ticker
         self.lookback_days = lookback_days
         self.cache_file = cache_file
         self.sentiment_data = None
+        self.newsapi_key = newsapi_key 
+        
         self.news_sources = [
-            {"name": "Reuters", "weight": 0.25},
-            {"name": "Bloomberg", "weight": 0.25},
-            {"name": "CNBC", "weight": 0.2},
-            {"name": "WSJ", "weight": 0.2},
-            {"name": "MarketWatch", "weight": 0.1}
+            {"name": "reuters", "weight": 0.25},
+            {"name": "bloomberg", "weight": 0.25},
+            {"name": "cnbc", "weight": 0.2},
+            {"name": "wsj", "weight": 0.2},
+            {"name": "marketwatch", "weight": 0.1}
         ]
+        
         self.sia = SentimentIntensityAnalyzer()
         
         self._load_cache()
@@ -45,17 +48,16 @@ class NewsSentimentAnalyzer:
                 with open(self.cache_file, 'r') as f:
                     cached_data = json.load(f)
                 
+                processed_cache = {}
                 for date_str, data in cached_data.items():
-                    if isinstance(date_str, str):
-                        try:
-                            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-                            cached_data[date_obj] = data
-                            del cached_data[date_str]
-                        except ValueError:
-                            pass
+                    try:
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        processed_cache[date_obj] = data
+                    except ValueError:
+                        processed_cache[date_str] = data
                 
-                self.sentiment_data = cached_data
-                logging.info(f"Loaded sentiment cache with {len(cached_data)} entries")
+                self.sentiment_data = processed_cache
+                logging.info(f"Loaded sentiment cache with {len(processed_cache)} entries")
             except Exception as e:
                 logging.error(f"Error loading sentiment cache: {e}")
                 self.sentiment_data = {}
@@ -63,7 +65,6 @@ class NewsSentimentAnalyzer:
             self.sentiment_data = {}
     
     def _save_cache(self):
-        """Save sentiment data to cache file"""
         try:
             serializable_data = {}
             for date_obj, data in self.sentiment_data.items():
@@ -85,154 +86,167 @@ class NewsSentimentAnalyzer:
             logging.error(f"Error saving sentiment cache: {e}")
     
     def _fetch_news_for_date(self, date):
-
-        date_seed = int(date.strftime("%Y%m%d"))
-        np.random.seed(date_seed)
-        
-        news_count = np.random.randint(3, 15) 
         articles = []
-        
-        possible_headlines = [
-            "Tesla {action} {number}% after {event}",
-            "Elon Musk {statement} about Tesla's {topic}",
-            "Tesla {product} {reception} by {audience}",
-            "Analysts {view} Tesla's {metric} in {timeframe}",
-            "Tesla's {department} faces {challenge} amid {situation}"
-        ]
-        
-        actions = ["jumps", "drops", "rises", "falls", "gains", "loses", "surges", "plunges"]
-        numbers = ["2", "3", "4", "5", "7", "8", "10", "12", "15"]
-        events = ["earnings report", "production update", "new product announcement", 
-                 "Musk tweet", "factory opening", "delivery numbers", "analyst upgrade",
-                 "competitor news", "supply chain update", "regulatory approval"]
-        
-        statements = ["tweets", "announces", "criticizes", "praises", "defends", "questions",
-                     "reveals plans", "shares insights", "expresses concern", "shows excitement"]
-        
-        topics = ["production goals", "FSD rollout", "new factory", "battery technology", 
-                 "vehicle safety", "sales strategy", "energy products", "AI development",
-                 "robotics program", "manufacturing efficiency"]
-        
-        products = ["Model Y", "Cybertruck", "Roadster", "Semi", "Model 3", "Model X", 
-                   "Solar Roof", "Powerwall", "Optimus robot", "FSD Beta"]
-        
-        receptions = ["well received", "criticized", "praised", "questioned", "under scrutiny",
-                     "beating expectations", "falling short", "gaining traction", "facing challenges"]
-        
-        audiences = ["customers", "investors", "analysts", "regulators", "competitors",
-                    "the market", "industry experts", "early adopters", "the media"]
-        
-        views = ["upgrade", "downgrade", "question", "praise", "criticize", "highlight",
-                "express concern about", "show optimism for", "remain neutral on"]
-        
-        metrics = ["delivery numbers", "production capacity", "profit margins", "growth rate",
-                  "cash position", "debt levels", "R&D spending", "market share", "revenue growth"]
-        
-        timeframes = ["Q1", "Q2", "Q3", "Q4", "the coming year", "the next quarter",
-                     "the long term", "the current environment", "a challenging market"]
-        
-        departments = ["manufacturing", "software division", "energy business", "autonomous driving team",
-                      "design studio", "battery production", "sales department", "service centers"]
-        
-        challenges = ["production delays", "regulatory hurdles", "supply chain issues", "competition",
-                     "quality concerns", "talent acquisition", "cost pressures", "technical challenges"]
-        
-        situations = ["global chip shortage", "rising material costs", "economic uncertainty",
-                     "changing consumer preferences", "regulatory scrutiny", "market volatility"]
-        
-        for source in self.news_sources:
-            source_articles = []
-            n_articles = max(1, int(news_count * source["weight"] * 2))
+        try:
+            date_str = date.strftime("%Y-%m-%d")
+            next_date = (date + timedelta(days=1)).strftime("%Y-%m-%d")
             
-            for _ in range(n_articles):
-                template = np.random.choice(possible_headlines)
-                
-                headline = template
-                if "{action}" in headline:
-                    headline = headline.replace("{action}", np.random.choice(actions))
-                if "{number}" in headline:
-                    headline = headline.replace("{number}", np.random.choice(numbers))
-                if "{event}" in headline:
-                    headline = headline.replace("{event}", np.random.choice(events))
-                if "{statement}" in headline:
-                    headline = headline.replace("{statement}", np.random.choice(statements))
-                if "{topic}" in headline:
-                    headline = headline.replace("{topic}", np.random.choice(topics))
-                if "{product}" in headline:
-                    headline = headline.replace("{product}", np.random.choice(products))
-                if "{reception}" in headline:
-                    headline = headline.replace("{reception}", np.random.choice(receptions))
-                if "{audience}" in headline:
-                    headline = headline.replace("{audience}", np.random.choice(audiences))
-                if "{view}" in headline:
-                    headline = headline.replace("{view}", np.random.choice(views))
-                if "{metric}" in headline:
-                    headline = headline.replace("{metric}", np.random.choice(metrics))
-                if "{timeframe}" in headline:
-                    headline = headline.replace("{timeframe}", np.random.choice(timeframes))
-                if "{department}" in headline:
-                    headline = headline.replace("{department}", np.random.choice(departments))
-                if "{challenge}" in headline:
-                    headline = headline.replace("{challenge}", np.random.choice(challenges))
-                if "{situation}" in headline:
-                    headline = headline.replace("{situation}", np.random.choice(situations))
-                
-                positive_keywords = ["jumps", "rises", "gains", "surges", "praised", "well received", 
-                                    "beating expectations", "upgrade", "optimism", "excitement"]
-                negative_keywords = ["drops", "falls", "loses", "plunges", "criticized", "scrutiny", 
-                                    "falling short", "challenges", "downgrade", "concern"]
-                
-                sentiment_shift = 0
-                for keyword in positive_keywords:
-                    if keyword in headline.lower():
-                        sentiment_shift += 0.2
-                
-                for keyword in negative_keywords:
-                    if keyword in headline.lower():
-                        sentiment_shift -= 0.2
-                
-                base_sentiment = np.random.normal(0, 0.3) + sentiment_shift
-                
-                base_sentiment = max(min(base_sentiment, 0.8), -0.8)
-                
-                content = headline + ". " + "Tesla " + np.random.choice([
-                    "continues to innovate in the electric vehicle market.",
-                    "faces increasing competition from traditional automakers.",
-                    "production numbers are closely watched by investors.",
-                    "stock has been volatile in recent trading sessions.",
-                    "remains a leader in EV technology despite challenges.",
-                    "CEO Elon Musk has been active on social media discussing company plans.",
-                    "analysts have mixed opinions on the company's valuation.",
-                    "is expanding its factory capacity globally.",
-                    "energy business is gaining more attention from investors.",
-                    "autonomous driving technology continues to evolve."
-                ])
-                
-                source_articles.append({
-                    "headline": headline,
-                    "content": content,
-                    "source": source["name"],
-                    "date": date,
-                    "base_sentiment": base_sentiment
-                })
+            query = f"{self.ticker} OR Tesla"
             
-            articles.extend(source_articles)
+            url = "https://newsapi.org/v2/everything"
+            
+            params = {
+                'q': query,
+                'from': date_str,
+                'to': next_date,
+                'language': 'en',
+                'sortBy': 'relevancy',
+                'apiKey': self.newsapi_key,
+                'pageSize': 100  
+            }
+            
+            response = requests.get(url, params=params)
+            
+            if response.status_code == 200:
+                news_data = response.json()
+                
+                if news_data['status'] == 'ok':
+                    for article in news_data['articles']:
+                        source_name = article.get('source', {}).get('name', '').lower()
+                        
+                        source_weight = 0.1 
+                        for source in self.news_sources:
+                            if source['name'].lower() in source_name:
+                                source_name = source['name']  
+                                source_weight = source['weight']
+                                break
+                        
+                        article_data = {
+                            'headline': article.get('title', ''),
+                            'content': article.get('description', '') or article.get('content', ''),
+                            'source': source_name,
+                            'date': date,
+                            'url': article.get('url', ''),
+                            'source_weight': source_weight
+                        }
+                        
+                        if article_data['headline'] and article_data['content']:
+                            articles.append(article_data)
+                
+                logging.info(f"Retrieved {len(articles)} articles for {date_str}")
+            else:
+                logging.error(f"Failed to retrieve news. Status code: {response.status_code}")
+                logging.error(f"Response: {response.text}")
+        
+        except Exception as e:
+            logging.error(f"Error fetching news for {date}: {e}")
+        
+
+        if not articles:
+            logging.warning(f"No articles found for {date}. Using fallback method.")
+            articles = self._fetch_news_fallback(date)
         
         return articles
     
-    def _analyze_sentiment(self, article):
+    def _fetch_news_fallback(self, date):
+        try:
 
+            ticker_symbol = self.ticker
+            company_name = "Tesla" if self.ticker == "TSLA" else self.ticker
+            
+            date_str = date.strftime("%Y-%m-%d")
+            fallback_articles = []
+            
+            search_terms = [ticker_symbol, company_name]
+            
+            for term in search_terms:
+                search_url = f"https://www.google.com/search?q={term}&tbm=nws&tbs=cdr:1,cd_min:{date_str},cd_max:{date_str}"
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                
+                response = requests.get(search_url, headers=headers)
+                
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    news_items = soup.find_all('div', {'class': 'SoaBEf'})
+                    
+                    for item in news_items:
+                        try:
+                            headline_elem = item.find('div', {'role': 'heading'})
+                            headline = headline_elem.text if headline_elem else ""
+                            
+                            source_elem = item.find('div', {'class': 'CEMjEf'})
+                            source_name = source_elem.text.split('·')[0].strip() if source_elem else "Unknown"
+                            
+                            content_elem = item.find('div', {'class': 'GI74Re'})
+                            content = content_elem.text if content_elem else ""
+                
+                            source_weight = 0.1  
+                            normalized_source = "other"
+                            for source in self.news_sources:
+                                if source['name'].lower() in source_name.lower():
+                                    normalized_source = source['name']
+                                    source_weight = source['weight']
+                                    break
+                            
+                            if not headline or not content:
+                                continue
+                                
+                            fallback_articles.append({
+                                'headline': headline,
+                                'content': content,
+                                'source': normalized_source,
+                                'date': date,
+                                'source_weight': source_weight
+                            })
+                        except Exception as inner_e:
+                            logging.error(f"Error parsing news item: {inner_e}")
+                
+            logging.info(f"Fallback retrieved {len(fallback_articles)} articles for {date_str}")
+            return fallback_articles
+            
+        except Exception as e:
+            logging.error(f"Fallback news retrieval failed for {date}: {e}")
+            
+            logging.warning(f"Using placeholder news data for {date}")
+            
+            placeholder_articles = [
+                {
+                    'headline': f"Tesla stock update for {date.strftime('%Y-%m-%d')}",
+                    'content': "No real news available for this date. This is placeholder content.",
+                    'source': "placeholder",
+                    'date': date,
+                    'source_weight': 0.1
+                }
+            ]
+            
+            return placeholder_articles
+    
+    def _analyze_sentiment(self, article):
+        """Analyze the sentiment of an article using VADER sentiment analyzer"""
         text = article["headline"] + " " + article["content"]
         
         sentiment = self.sia.polarity_scores(text)
-
-        adjustment = article["base_sentiment"] * 0.5
-        sentiment["compound"] = max(min(sentiment["compound"] + adjustment, 1.0), -1.0)
+        
+        tesla_positive_terms = ['beat', 'exceeded', 'record', 'growth', 'profit', 'innovation',
+                               'delivered', 'ahead', 'positive', 'bullish', 'upgrade']
+        
+        tesla_negative_terms = ['recall', 'crash', 'investigation', 'delay', 'missed',
+                               'lawsuit', 'fire', 'bearish', 'downgrade', 'competition']
+        
+        for term in tesla_positive_terms:
+            if term.lower() in text.lower():
+                sentiment['compound'] = min(sentiment['compound'] + 0.05, 1.0)
+                
+        for term in tesla_negative_terms:
+            if term.lower() in text.lower():
+                sentiment['compound'] = max(sentiment['compound'] - 0.05, -1.0)
         
         return sentiment
     
     def fetch_sentiment_for_period(self, start_date, end_date):
-
         current_date = start_date
         results = {}
         
@@ -251,12 +265,19 @@ class NewsSentimentAnalyzer:
                 weighted_compound = 0
                 total_sources_weight = 0
                 source_sentiments = {}
+                article_sentiments = []
                 
                 for article in articles:
                     sentiment = self._analyze_sentiment(article)
                     source = article["source"]
                     
-                    source_weight = next((s["weight"] for s in self.news_sources if s["name"] == source), 0.1)
+                    article_sentiments.append({
+                        'headline': article['headline'][:50] + '...',
+                        'source': source,
+                        'sentiment': sentiment['compound']
+                    })
+                    
+                    source_weight = article.get('source_weight', 0.1)
                     
                     if source not in source_sentiments:
                         source_sentiments[source] = {
@@ -283,12 +304,13 @@ class NewsSentimentAnalyzer:
                     "source_breakdown": {s: {"avg_sentiment": d["compound_sum"] / d["count"] if d["count"] > 0 else 0, 
                                             "count": d["count"], 
                                             "weight": d["weight"]} 
-                                        for s, d in source_sentiments.items()}
+                                        for s, d in source_sentiments.items()},
+                    "articles": article_sentiments[:5]  
                 }
                 
                 self.sentiment_data[current_date] = results[current_date]
                 
-                time.sleep(0.1)
+                time.sleep(1)
             
             current_date += timedelta(days=1)
         
@@ -297,7 +319,6 @@ class NewsSentimentAnalyzer:
         return results
     
     def get_historical_sentiment(self, end_date=None):
-
         if end_date is None:
             end_date = datetime.now().date()
         
@@ -306,7 +327,6 @@ class NewsSentimentAnalyzer:
         return self.fetch_sentiment_for_period(start_date, end_date)
     
     def create_sentiment_features(self, stock_data):
-
         start_date = stock_data.index.min().date()
         end_date = stock_data.index.max().date()
         
@@ -327,7 +347,6 @@ class NewsSentimentAnalyzer:
         if not isinstance(stock_data.index, pd.DatetimeIndex):
             stock_data.index = pd.to_datetime(stock_data.index)
         
-
         sentiment_df = sentiment_df.reindex(stock_data.index)
         sentiment_df["sentiment"].fillna(method="ffill", inplace=True)
         sentiment_df["article_count"].fillna(0, inplace=True)
@@ -398,16 +417,48 @@ class NewsSentimentAnalyzer:
         plt.savefig(output_path)
         logging.info(f"Sentiment vs price chart saved to {output_path}")
         plt.close()
+        
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
+        
+        ax1.set_ylabel('Stock Price ($)', color='tab:blue')
+        ax1.plot(stock_data.index, stock_data['Adj Close'], color='tab:blue', label='TSLA Price')
+        ax1.tick_params(axis='y', labelcolor='tab:blue')
+        ax1.legend(loc='upper left')
+        ax1.set_title(f'Tesla Stock Price ({stock_data.index.min().date()} to {stock_data.index.max().date()})')
+        
+        ax2.set_ylabel('Sentiment Score', color='tab:red')
+        ax2.plot(stock_data.index, stock_data['sentiment'], color='tab:red', label='News Sentiment')
+        ax2.fill_between(stock_data.index, 0, stock_data['sentiment'], 
+                         where=stock_data['sentiment'] > 0, color='tab:green', alpha=0.3)
+        ax2.fill_between(stock_data.index, 0, stock_data['sentiment'], 
+                         where=stock_data['sentiment'] < 0, color='tab:red', alpha=0.3)
+        ax2.tick_params(axis='y', labelcolor='tab:red')
+        ax2.set_ylim(-1.1, 1.1)
+        ax2.axhline(y=0, color='k', linestyle='-', alpha=0.2)
+        ax2.legend(loc='upper left')
+        ax2.set_title('News Sentiment')
+        
+        ax3.set_ylabel('Article Count', color='tab:purple')
+        ax3.bar(stock_data.index, stock_data['article_count'], color='tab:purple', label='Article Count', alpha=0.7)
+        ax3.tick_params(axis='y', labelcolor='tab:purple')
+        ax3.legend(loc='upper left')
+        ax3.set_title('Daily Article Count')
+        
+        plt.tight_layout()
+        debug_path = output_path.replace('.png', '_debug.png')
+        plt.savefig(debug_path)
+        logging.info(f"Debug chart saved to {debug_path}")
+        plt.close()
 
 def prepare_sentiment_features(data_path="./../data/stock_data.csv", 
                               output_path="./../data/stock_data_with_sentiment.csv",
-                              lookback_days=60):
-
+                              lookback_days=60,
+                              newsapi_key="YOUR_NEWSAPI_KEY"):
     try:
         stock_data = pd.read_csv(data_path, parse_dates=['Date'], index_col='Date')
         logging.info(f"Loaded stock data from {data_path}, shape: {stock_data.shape}")
         
-        analyzer = NewsSentimentAnalyzer(lookback_days=lookback_days)
+        analyzer = NewsSentimentAnalyzer(lookback_days=lookback_days, newsapi_key=newsapi_key)
         
         augmented_data = analyzer.create_sentiment_features(stock_data)
         logging.info(f"Added sentiment features, new shape: {augmented_data.shape}")
@@ -418,7 +469,6 @@ def prepare_sentiment_features(data_path="./../data/stock_data.csv",
                          'sentiment_change', 'sentiment_streak', 
                          'sentiment_acceleration', 'relative_article_volume']
         
-
         missing_cols = [col for col in sentiment_cols if col not in augmented_data.columns]
         if missing_cols:
             logging.warning(f"Missing sentiment columns: {missing_cols}")
@@ -434,7 +484,6 @@ def prepare_sentiment_features(data_path="./../data/stock_data.csv",
         raise
 
 def integrate_sentiment_with_lstm(stock_data, sentiment_weight=0.6):
-
     try:
         sentiment_cols = ['sentiment', 'sentiment_5d_avg', 'sentiment_5d_std', 
                          'sentiment_change', 'sentiment_streak', 
@@ -457,7 +506,6 @@ def integrate_sentiment_with_lstm(stock_data, sentiment_weight=0.6):
         
         for col in available_sentiment_cols:
             if stock_data[col].nunique() <= 1:
-
                 stock_data[col] = stock_data[col] + np.random.normal(0, 0.001, size=len(stock_data))
         
         stock_data[available_sentiment_cols] = sentiment_scaler.fit_transform(stock_data[available_sentiment_cols])
@@ -494,13 +542,14 @@ def integrate_sentiment_with_lstm(stock_data, sentiment_weight=0.6):
 def main(data_path="./../data/stock_data.csv", 
          output_path="./../data/stock_data_with_sentiment.csv",
          lookback_days=50,
-         sentiment_weight=0.3):
-
+         sentiment_weight=0.3,
+         newsapi_key="YOUR_NEWSAPI_KEY"):
     try:
         augmented_data = prepare_sentiment_features(
             data_path=data_path,
             output_path=output_path,
-            lookback_days=lookback_days
+            lookback_days=lookback_days,
+            newsapi_key=newsapi_key
         )
         
         lstm_ready_data = integrate_sentiment_with_lstm(
@@ -518,6 +567,7 @@ def main(data_path="./../data/stock_data.csv",
         print(f"Data saved to: {output_path}")
         print(f"LSTM-ready data saved to: {lstm_data_path}")
         print(f"Sentiment visualization saved to: {'./../data/sentiment_price_chart.png'}")
+        print(f"Debug visualization saved to: {'./../data/sentiment_price_chart_debug.png'}")
         print("=======================================\n")
         
         return lstm_ready_data
@@ -540,10 +590,13 @@ if __name__ == "__main__":
                         help="Number of previous days to analyze sentiment")
     parser.add_argument("--sentiment_weight", type=float, default=0.6,
                         help="Weight to apply to sentiment features (0-1)")
+    parser.add_argument("--newsapi_key", type=str, required=True,
+                        help="Your NewsAPI API key")
     
     args = parser.parse_args()
     
     main(data_path=args.data_path, 
          output_path=args.output_path,
          lookback_days=args.lookback_days,
-         sentiment_weight=args.sentiment_weight)
+         sentiment_weight=args.sentiment_weight,
+         newsapi_key=args.newsapi_key)

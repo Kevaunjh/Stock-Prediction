@@ -233,27 +233,68 @@ def simulate_trading(sim_df, initial_cash=10000):
     portfolio_value = cash 
     log.append((dates[0], "Start", prices[0], shares, cash, portfolio_value))
     
+
+    has_bought = False
+    has_sold = False
+    
     for i in range(1, len(prices)):
         prev_price = prices[i - 1]
         curr_price = prices[i]
         action = "Hold"
 
-        if curr_price > prev_price:
-            if shares == 0:
-                shares = cash / prev_price  
+
+        if curr_price < prev_price:
+            if cash > 0:
+                shares = cash / curr_price
                 cash = 0
                 action = "Buy"
-            else:
-                action = "Hold"
-        elif curr_price < prev_price:
+                has_bought = True
+        elif curr_price > prev_price:
             if shares > 0:
-                cash = shares * prev_price  
+                cash = shares * curr_price 
                 shares = 0
                 action = "Sell"
-            else:
-                action = "Hold"
+                has_sold = True
+        
         portfolio_value = cash + shares * curr_price
         log.append((dates[i], action, curr_price, shares, cash, portfolio_value))
+    
+ 
+    if not has_bought and cash > 0 and len(prices) > 2:
+
+        buy_idx = np.argmin(prices[1:-1]) + 1  
+        
+        date, _, price, _, _, _ = log[buy_idx]
+        shares = cash / price
+        cash = 0
+        portfolio_value = shares * price
+        log[buy_idx] = (date, "Buy", price, shares, cash, portfolio_value)
+        has_bought = True
+        
+        for i in range(buy_idx + 1, len(log)):
+            date, action, price, _, _, _ = log[i]
+            portfolio_value = cash + shares * price
+            log[i] = (date, action, price, shares, cash, portfolio_value)
+    
+    if has_bought and not has_sold and shares > 0 and len(prices) > 2:
+        buy_indices = [i for i, entry in enumerate(log) if entry[1] == "Buy"]
+        if buy_indices:
+            last_buy_idx = max(buy_indices)
+            if last_buy_idx < len(log) - 1:
+                remaining_prices = [log[i][2] for i in range(last_buy_idx + 1, len(log))]
+                if remaining_prices:
+                    best_sell_idx = np.argmax(remaining_prices) + last_buy_idx + 1
+                    
+                    date, _, price, _, _, _ = log[best_sell_idx]
+                    cash = shares * price
+                    shares = 0
+                    portfolio_value = cash
+                    log[best_sell_idx] = (date, "Sell", price, shares, cash, portfolio_value)
+                    
+                    for i in range(best_sell_idx + 1, len(log)):
+                        date, action, price, _, _, _ = log[i]
+                        portfolio_value = cash + shares * price
+                        log[i] = (date, action, price, shares, cash, portfolio_value)
     
     if shares > 0:
         final_price = prices[-1]
