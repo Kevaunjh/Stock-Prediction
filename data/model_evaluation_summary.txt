@@ -1,0 +1,15 @@
+LSTM Model Evaluation Summary
+============================
+
+Mean Absolute Error: 12.1614
+Root Mean Squared Error: 12.1711
+R² Score: -1.8763
+Direction Accuracy: 0.6667
+Mean Absolute Percentage Error: 5.0778%
+
+- The model's ability to predict price direction is good (66.7%).
+- The percentage error in predictions is fair (5.08%).
+- The model explains -187.6% of the variance in price movements.
+
+Trading Recommendation:
+This model may be suitable for trading assistance, but should be used with caution and alongside other indicators.

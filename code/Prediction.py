@@ -47,7 +47,6 @@ def load_metrics():
         return {}, {}
 
 def calculate_recent_trend(data, window=5):
-    """Calculate the recent trend direction and strength from historical data"""
     if data is None or len(data) == 0:
         return 0
         
@@ -73,7 +72,6 @@ def calculate_recent_trend(data, window=5):
     return trend_strength
 
 def apply_adaptive_noise(base_prediction, trend_strength, confidence, volatility):
-    """Apply adaptive noise to predictions based on trend strength and confidence"""
     noise_scale = volatility * (1 - confidence)
     
     directional_bias = trend_strength * confidence
@@ -83,7 +81,6 @@ def apply_adaptive_noise(base_prediction, trend_strength, confidence, volatility
     return base_prediction * (1 + noise/100) 
 
 def calculate_volatility(data, window=10):
-    """Calculate historical volatility as standard deviation of daily returns"""
     if len(data) < 2:
         return 0.01 
         
@@ -98,9 +95,6 @@ def calculate_volatility(data, window=10):
     return max(volatility, 0.01)  
 
 def predict_future(data, start_date, end_date, model_path, lookback=10):
-    """
-    Generate forecasted prices with adaptive directional confidence.
-    """
     try:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found at {model_path}")
@@ -207,11 +201,11 @@ def predict_future(data, start_date, end_date, model_path, lookback=10):
         forecast_df = pd.DataFrame(adjusted_predictions, index=future_dates, columns=['Predicted Price'])
         
         mape = metrics.get('MAPE', 5.0)  
-        
+        confidence_shrink_factor = 0.2
         intervals = []
         for i in range(len(future_dates)):
             time_factor = 1 + (i / len(future_dates)) * 0.5  
-            interval = mape * time_factor
+            interval = mape * time_factor * confidence_shrink_factor
             intervals.append(interval)
         
         forecast_df['MAPE'] = intervals
